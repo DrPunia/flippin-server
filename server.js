@@ -112,19 +112,53 @@ io.on('connection', socket => {
   const ROOM_ID = 'default';
 
 io.on('connection', socket => {
+  const ROOM_ID = 'default';
+
+  // Ensure the default room state exists
   const room = rooms[ROOM_ID] ?? (rooms[ROOM_ID] = createNewGameState());
   socket.join(ROOM_ID);
 
+  // Add player if not present
+  if (!room.players.find(p => p.id === socket.id)) {
+    room.players.push({
+      id: socket.id,
+      name: room.players.length ? `Player 2` : `Player 1`,
+      matches: 0, asked: 0, extra: 0, prevMatches: 0
+    });
+  }
+
+  // Once two players are in, start the timer
+  if (room.players.length === 2 && !room.timer.running) {
+    startTimer(ROOM_ID);
+  }
+
+  socket.emit('roomAssigned', { roomId: ROOM_ID });
+  broadcastState(ROOM_ID);
   socket.on('rematch', (_, cb) => {
-  const room = rooms['default'];
-  if (!room) return cb({ error: 'No game state.' });
-  if (room.players.length !== 2) return cb({ error: 'Waiting for opponent.' });
+  const ROOM_ID = 'default';
+  const room = rooms[ROOM_ID];
+  if (!room) return cb && cb({ error: 'No game found.' });
+  if (room.players.length !== 2) return cb && cb({ error: 'Waiting for opponent.' });
+
+  // Reset game state but keep the same players
   const newGame = createNewGameState();
-  rooms['default'] = newGame;
-  newGame.players = room.players.map(p => ({ ...p, matches:0, asked:0, extra:0, prevMatches:0 }));
-  broadcastState('default');
-  startTimer('default');
-  cb({ ok: true });
+  newGame.players = room.players.map(p => ({
+    id: p.id,
+    name: p.name,
+    matches: 0,
+    asked: 0,
+    extra: 0,
+    prevMatches: 0
+  }));
+
+  rooms[ROOM_ID] = newGame;
+  startTimer(ROOM_ID);
+  broadcastState(ROOM_ID);
+  cb && cb({ ok: true });
+});
+
+
+  // ... other event handlers (flip, askQuestion, rematch, etc.) ...
 });
 
 
