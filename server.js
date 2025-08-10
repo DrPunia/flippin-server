@@ -51,7 +51,7 @@ function createNewGameState(){
     players: [], // { id, name, matches, asked, extra, prevMatches }
     flipped: [], // indices currently revealed this turn
     currentPlayer: 0, // index into players
-    timer: { remaining: 300, running: false, intervalId: null },
+    timer: { remaining: 180, running: false, intervalId: null },
     log: [] // {type:'q'|'a'|'info', text, by}
   };
 }
@@ -109,33 +109,42 @@ function resumeTimer(roomId){
 io.on('connection', socket => {
   console.log('conn', socket.id);
 
-  // Create a room and join as player 1
-  socket.on('createRoom', (cb) => {
-    const roomId = Math.random().toString(36).slice(2,8);
-    const g = createNewGameState();
-    g.id = roomId;
-    rooms[roomId] = g;
-    // add player as Player 1
-    g.players.push({ id: socket.id, name: 'Player 1', matches: 0, asked: 0, extra: 0, prevMatches: 0 });
-    socket.join(roomId);
-    console.log('room created', roomId);
-    broadcastState(roomId);
-    cb && cb({ ok: true, roomId, state: { players: g.players.length }});
-  });
+  const ROOM_ID = 'default';
 
-  // Join existing room
-  socket.on('joinRoom', ({ roomId, name }, cb) => {
-    const room = rooms[roomId];
-    if (!room) return cb && cb({ error: 'Room not found' });
-    if (room.players.length >= 2) return cb && cb({ error: 'Room full' });
-    room.players.push({ id: socket.id, name: name || 'Player 2', matches: 0, asked: 0, extra: 0, prevMatches: 0 });
-    socket.join(roomId);
-    // start timer when both players present
-    room.log.unshift({ type: 'info', text: `${name || 'Player 2'} joined.` });
-    broadcastState(roomId);
-    startTimer(roomId);
-    cb && cb({ ok: true, state: room });
-  });
+io.on('connection', socket => {
+  const room = rooms[ROOM_ID] ?? (rooms[ROOM_ID] = createNewGameState());
+  socket.join(ROOM_ID);
+
+  socket.on('rematch', (_, cb) => {
+  const room = rooms['default'];
+  if (!room) return cb({ error: 'No game state.' });
+  if (room.players.length !== 2) return cb({ error: 'Waiting for opponent.' });
+  const newGame = createNewGameState();
+  rooms['default'] = newGame;
+  newGame.players = room.players.map(p => ({ ...p, matches:0, asked:0, extra:0, prevMatches:0 }));
+  broadcastState('default');
+  startTimer('default');
+  cb({ ok: true });
+});
+
+
+  // If first player, add as Player 1; else Player 2 if empty slot...
+  if (room.players.length < 2 && !room.players.find(p => p.id === socket.id)) {
+    room.players.push({
+      id: socket.id,
+      name: room.players.length ? `Player 2` : `Player 1`,
+      matches:0, asked:0, extra:0, prevMatches:0
+    });
+  }
+  if (room.players.length === 2 && !room.timer.running) {
+    startTimer(ROOM_ID);
+  }
+
+  socket.emit('roomAssigned', { roomId: ROOM_ID });
+
+  broadcastState(ROOM_ID);
+  ...
+});
 
   // Flip card
   socket.on('flip', ({ roomId, idx }, cb) => {
