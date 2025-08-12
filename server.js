@@ -90,4 +90,4 @@ function pauseTimer(roomId) {
     if (!r || !r.timer.running) return;
     clearInterval(r.timer.intervalId);
     r.timer.running = false;
-    io.to(roomId).emit('
+    io.to(roomId).emit('timerPaused');
