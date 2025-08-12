@@ -50,6 +50,11 @@ function createNewGameState() {
     };
 }
 
+// This helper now correctly calculates remaining questions out of 5
+function questionsLeft(player) {
+    return 5 - (player.asked || 0);
+}
+
 function broadcastState(roomId) {
     const r = rooms[roomId];
     if (!r) return;
@@ -62,22 +67,20 @@ function broadcastState(roomId) {
     });
 }
 
-// MODIFIED: This function now checks for the 6-match win condition first.
 function checkGameOver(roomId) {
     const room = rooms[roomId];
     if (!room || room.gameOver) return;
 
     let winner = null;
 
-    // NEW: Rule #2 - Check if any player has 6 matches
+    // Rule #2 - Check if any player has 6 matches
     for (const player of room.players) {
         if (player.matches >= 6) {
             winner = player;
-            break; 
+            break;
         }
     }
 
-    // If no one has 6 matches, check the original win conditions
     if (!winner) {
         const totalMatches = (room.players[0]?.matches || 0) + (room.players[1]?.matches || 0);
         if (totalMatches === 10) {
@@ -86,7 +89,7 @@ function checkGameOver(roomId) {
         } else if (room.timer.remaining <= 0) {
             winner = room.players[0].matches > room.players[1].matches ? room.players[0] : (room.players[1]?.matches > room.players[0]?.matches ? room.players[1] : null);
             if (room.players.length === 2 && room.players[0].matches === room.players[1].matches) winner = { name: "It's a tie!" };
-            else if (room.players.length === 1) winner = room.players[0]; // If one player left, they win by default on time up
+            else if (room.players.length === 1) winner = room.players[0];
         }
     }
 
@@ -96,7 +99,6 @@ function checkGameOver(roomId) {
         io.to(roomId).emit('gameOver', { winnerName: winner.name });
     }
 }
-
 
 function startTimer(roomId) {
     const r = rooms[roomId];
@@ -109,7 +111,6 @@ function startTimer(roomId) {
             clearInterval(r.timer.intervalId);
             r.timer.running = false;
             io.to(roomId).emit('timeUp');
-            r.log.unshift({ type: 'info', text: 'Time is up.' });
             broadcastState(roomId);
             checkGameOver(roomId);
         }
@@ -139,12 +140,7 @@ io.on('connection', socket => {
     socket.join(ROOM_ID);
 
     if (room.players.length < 2 && !room.players.find(p => p.id === socket.id)) {
-        room.players.push({
-            id: socket.id,
-            name: playerName,
-            matches: 0, asked: 0
-        });
-        room.log.unshift({ type: 'info', text: `${playerName} has joined.` });
+        room.players.push({ id: socket.id, name: playerName, matches: 0, asked: 0 });
     }
 
     if (room.players.length === 2 && !room.timer.running && !room.gameOver) {
@@ -195,23 +191,21 @@ io.on('connection', socket => {
                 cardA.matched = cardB.matched = true;
                 const player = room.players[playerIndex];
                 player.matches++;
-                room.log.unshift({ type: 'info', text: `${player.name} found a pair (${cardA.animal}).` });
                 room.flipped = [];
                 
                 pauseTimer(ROOM_ID);
                 broadcastState(ROOM_ID);
-                // Check for a win BEFORE asking a question
                 checkGameOver(ROOM_ID); 
-                // If game isn't over, then ask a question
+                
                 if (!room.gameOver) {
-                    io.to(player.id).emit('askQuestion');
+                    // CORRECTED: Send the 'remaining' payload with the event
+                    io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
                 }
             } else {
                 setTimeout(() => {
                     cardA.revealed = cardB.revealed = false;
                     room.flipped = [];
                     room.currentPlayer = 1 - room.currentPlayer;
-                    room.log.unshift({ type: 'info', text: `No match. It's now ${room.players[room.currentPlayer]?.name}'s turn.` });
                     broadcastState(ROOM_ID);
                 }, 900);
             }
@@ -219,17 +213,15 @@ io.on('connection', socket => {
         cb && cb({ ok: true });
     });
 
-    // MODIFIED: This function now checks the question limit.
     socket.on('askQuestion', ({ text }, cb) => {
         const room = rooms[ROOM_ID];
         if (!room) return;
         const asker = room.players.find(p => p.id === socket.id);
         if (!asker) return;
 
-        // NEW: Rule #1 - Check if the player has already asked 5 questions
-        if (asker.asked >= 5) {
-            socket.emit('noQuestionsLeft'); // Optional: notify player they are out
-            if (!room.gameOver) resumeTimer(ROOM_ID); // Resume game if it's not over
+        if (questionsLeft(asker) <= 0) {
+            socket.emit('noQuestionsLeft');
+            if (!room.gameOver) resumeTimer(ROOM_ID);
             return cb && cb({ ok: false, error: 'No questions left.' });
         }
         
@@ -261,14 +253,10 @@ io.on('connection', socket => {
         if (room) {
             const idx = room.players.findIndex(p => p.id === socket.id);
             if (idx !== -1) {
-                const name = room.players[idx].name;
                 room.players.splice(idx, 1);
-                room.log.unshift({ type: 'info', text: `${name} has disconnected.` });
-                
                 pauseTimer(ROOM_ID);
                 if (room.players.length < 2) room.gameOver = true;
                 broadcastState(ROOM_ID);
-                
                 if (room.players.length === 0) {
                     if (room.timer.intervalId) clearInterval(room.timer.intervalId);
                     delete rooms[ROOM_ID];
