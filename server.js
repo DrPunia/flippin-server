@@ -24,9 +24,7 @@ const rooms = {};
 
 function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
-        // This is the missing line that defines j
         const j = Math.floor(Math.random() * (i + 1));
-
         [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
@@ -64,7 +62,7 @@ function broadcastState(roomId) {
         players: r.players.map(p => ({ name: p.name, matches: p.matches, asked: p.asked || 0, extra: p.extra || 0 })),
         currentPlayer: r.currentPlayer,
         timer: { remaining: r.timer.remaining, running: r.timer.running },
-        chatLog: r.log.filter(item => item.type === 'q' || item.type === 'a') // Send only chat messages
+        chatLog: r.log.filter(item => item.type === 'q' || item.type === 'a')
     });
 }
 
@@ -104,7 +102,7 @@ function startTimer(roomId) {
             io.to(roomId).emit('timeUp');
             r.log.unshift({ type: 'info', text: 'Time is up.' });
             broadcastState(roomId);
-            checkGameOver(roomId); // Check for winner when time is up
+            checkGameOver(roomId);
         }
     }, 1000);
 }
