@@ -50,44 +50,53 @@ function createNewGameState() {
     };
 }
 
-function questionsLeft(player) {
-    return 5 + (player.extra || 0) - (player.asked || 0);
-}
-
 function broadcastState(roomId) {
     const r = rooms[roomId];
     if (!r) return;
     io.to(roomId).emit('state', {
         cards: r.cards,
-        players: r.players.map(p => ({ name: p.name, matches: p.matches, asked: p.asked || 0, extra: p.extra || 0 })),
+        players: r.players.map(p => ({ name: p.name, matches: p.matches, asked: p.asked || 0 })),
         currentPlayer: r.currentPlayer,
         timer: { remaining: r.timer.remaining, running: r.timer.running },
         chatLog: r.log.filter(item => item.type === 'q' || item.type === 'a')
     });
 }
 
+// MODIFIED: This function now checks for the 6-match win condition first.
 function checkGameOver(roomId) {
     const room = rooms[roomId];
     if (!room || room.gameOver) return;
 
-    const totalMatches = (room.players[0]?.matches || 0) + (room.players[1]?.matches || 0);
     let winner = null;
 
-    if (totalMatches === 10) {
-        pauseTimer(roomId);
-        room.gameOver = true;
-        winner = room.players[0].matches > room.players[1].matches ? room.players[0] : room.players[1];
-        if (room.players[0].matches === room.players[1].matches) winner = { name: "It's a tie!" };
-    } else if (room.timer.remaining <= 0) {
-        room.gameOver = true;
-        winner = room.players[0].matches > room.players[1].matches ? room.players[0] : (room.players[1]?.matches > room.players[0]?.matches ? room.players[1] : null);
-        if (room.players[0].matches === room.players[1]?.matches) winner = { name: "It's a tie!" };
+    // NEW: Rule #2 - Check if any player has 6 matches
+    for (const player of room.players) {
+        if (player.matches >= 6) {
+            winner = player;
+            break; 
+        }
+    }
+
+    // If no one has 6 matches, check the original win conditions
+    if (!winner) {
+        const totalMatches = (room.players[0]?.matches || 0) + (room.players[1]?.matches || 0);
+        if (totalMatches === 10) {
+            winner = room.players[0].matches > room.players[1].matches ? room.players[0] : room.players[1];
+            if (room.players[0].matches === room.players[1].matches) winner = { name: "It's a tie!" };
+        } else if (room.timer.remaining <= 0) {
+            winner = room.players[0].matches > room.players[1].matches ? room.players[0] : (room.players[1]?.matches > room.players[0]?.matches ? room.players[1] : null);
+            if (room.players.length === 2 && room.players[0].matches === room.players[1].matches) winner = { name: "It's a tie!" };
+            else if (room.players.length === 1) winner = room.players[0]; // If one player left, they win by default on time up
+        }
     }
 
     if (winner) {
+        pauseTimer(roomId);
+        room.gameOver = true;
         io.to(roomId).emit('gameOver', { winnerName: winner.name });
     }
 }
+
 
 function startTimer(roomId) {
     const r = rooms[roomId];
@@ -133,7 +142,7 @@ io.on('connection', socket => {
         room.players.push({
             id: socket.id,
             name: playerName,
-            matches: 0, asked: 0, extra: 0, prevMatches: 0
+            matches: 0, asked: 0
         });
         room.log.unshift({ type: 'info', text: `${playerName} has joined.` });
     }
@@ -152,7 +161,7 @@ io.on('connection', socket => {
 
         const playerNames = room.players.map(p => p.name);
         const newGame = createNewGameState();
-        newGame.players = room.players.map((p, i) => ({ ...p, name: playerNames[i], matches: 0, asked: 0, extra: 0, prevMatches: 0 }));
+        newGame.players = room.players.map((p, i) => ({ ...p, name: playerNames[i], matches: 0, asked: 0 }));
         rooms[ROOM_ID] = newGame;
         
         startTimer(ROOM_ID);
@@ -191,8 +200,12 @@ io.on('connection', socket => {
                 
                 pauseTimer(ROOM_ID);
                 broadcastState(ROOM_ID);
-                io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
-                checkGameOver(ROOM_ID);
+                // Check for a win BEFORE asking a question
+                checkGameOver(ROOM_ID); 
+                // If game isn't over, then ask a question
+                if (!room.gameOver) {
+                    io.to(player.id).emit('askQuestion');
+                }
             } else {
                 setTimeout(() => {
                     cardA.revealed = cardB.revealed = false;
@@ -206,11 +219,20 @@ io.on('connection', socket => {
         cb && cb({ ok: true });
     });
 
+    // MODIFIED: This function now checks the question limit.
     socket.on('askQuestion', ({ text }, cb) => {
         const room = rooms[ROOM_ID];
         if (!room) return;
         const asker = room.players.find(p => p.id === socket.id);
         if (!asker) return;
+
+        // NEW: Rule #1 - Check if the player has already asked 5 questions
+        if (asker.asked >= 5) {
+            socket.emit('noQuestionsLeft'); // Optional: notify player they are out
+            if (!room.gameOver) resumeTimer(ROOM_ID); // Resume game if it's not over
+            return cb && cb({ ok: false, error: 'No questions left.' });
+        }
+        
         asker.asked = (asker.asked || 0) + 1;
         room.log.unshift({ type: 'q', by: asker.name, text });
         
