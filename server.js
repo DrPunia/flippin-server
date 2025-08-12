@@ -50,7 +50,6 @@ function createNewGameState() {
     };
 }
 
-// This helper now correctly calculates remaining questions out of 5
 function questionsLeft(player) {
     return 5 - (player.asked || 0);
 }
@@ -72,8 +71,8 @@ function checkGameOver(roomId) {
     if (!room || room.gameOver) return;
 
     let winner = null;
+    let isTie = false;
 
-    // Rule #2 - Check if any player has 6 matches
     for (const player of room.players) {
         if (player.matches >= 6) {
             winner = player;
@@ -83,22 +82,26 @@ function checkGameOver(roomId) {
 
     if (!winner) {
         const totalMatches = (room.players[0]?.matches || 0) + (room.players[1]?.matches || 0);
-        if (totalMatches === 10) {
-            winner = room.players[0].matches > room.players[1].matches ? room.players[0] : room.players[1];
-            if (room.players[0].matches === room.players[1].matches) winner = { name: "It's a tie!" };
-        } else if (room.timer.remaining <= 0) {
-            winner = room.players[0].matches > room.players[1].matches ? room.players[0] : (room.players[1]?.matches > room.players[0]?.matches ? room.players[1] : null);
-            if (room.players.length === 2 && room.players[0].matches === room.players[1].matches) winner = { name: "It's a tie!" };
-            else if (room.players.length === 1) winner = room.players[0];
+        if (totalMatches === 10 || room.timer.remaining <= 0) {
+            const p1Matches = room.players[0]?.matches || 0;
+            const p2Matches = room.players[1]?.matches || 0;
+
+            if (p1Matches === p2Matches) {
+                winner = { name: "It's a tie!" };
+                isTie = true;
+            } else {
+                winner = p1Matches > p2Matches ? room.players[0] : room.players[1];
+            }
         }
     }
 
     if (winner) {
         pauseTimer(roomId);
         room.gameOver = true;
-        io.to(roomId).emit('gameOver', { winnerName: winner.name });
+        io.to(roomId).emit('gameOver', { winnerName: winner.name, isTie });
     }
 }
+
 
 function startTimer(roomId) {
     const r = rooms[roomId];
@@ -198,7 +201,6 @@ io.on('connection', socket => {
                 checkGameOver(ROOM_ID); 
                 
                 if (!room.gameOver) {
-                    // CORRECTED: Send the 'remaining' payload with the event
                     io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
                 }
             } else {
