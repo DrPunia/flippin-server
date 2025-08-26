@@ -46,7 +46,9 @@ function createNewGameState() {
         currentPlayer: 0,
         timer: { remaining: 180, running: false, intervalId: null },
         log: [],
-        gameOver: false
+        gameOver: false,
+        gameMode: 'questions', // Default mode
+        playerChoices: {} // To track who has chosen
     };
 }
 
@@ -145,13 +147,30 @@ io.on('connection', socket => {
     if (room.players.length < 2 && !room.players.find(p => p.id === socket.id)) {
         room.players.push({ id: socket.id, name: playerName, matches: 0, asked: 0 });
     }
-
-    if (room.players.length === 2 && !room.timer.running && !room.gameOver) {
-        startTimer(ROOM_ID);
-    }
-
-    socket.emit('roomAssigned', { roomId: ROOM_ID });
+    
+    io.to(ROOM_ID).emit('gameModeUpdated', { mode: room.gameMode });
     broadcastState(ROOM_ID);
+
+    socket.on('setGameMode', ({ mode }) => {
+        const room = rooms[ROOM_ID];
+        if (!room) return;
+        
+        // If one player says "no-questions", the mode is set for the whole game
+        if (mode === 'no-questions') {
+            room.gameMode = 'no-questions';
+        }
+        room.playerChoices[socket.id] = true; // Mark that this player has chosen
+
+        // If both players have made a choice, start the game
+        if (Object.keys(room.playerChoices).length === 2 && room.players.length === 2) {
+             if (!room.timer.running && !room.gameOver) {
+                startTimer(ROOM_ID);
+            }
+        }
+        
+        io.to(ROOM_ID).emit('gameModeUpdated', { mode: room.gameMode });
+        broadcastState(ROOM_ID);
+    });
 
     socket.on('rematch', (_, cb) => {
         const room = rooms[ROOM_ID];
@@ -163,7 +182,7 @@ io.on('connection', socket => {
         newGame.players = room.players.map((p, i) => ({ ...p, name: playerNames[i], matches: 0, asked: 0 }));
         rooms[ROOM_ID] = newGame;
         
-        startTimer(ROOM_ID);
+        // Don't start timer, wait for mode selection
         broadcastState(ROOM_ID);
         io.to(ROOM_ID).emit('gameReset');
         cb && cb({ ok: true });
@@ -201,7 +220,12 @@ io.on('connection', socket => {
                 checkGameOver(ROOM_ID); 
                 
                 if (!room.gameOver) {
-                    io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
+                    if (room.gameMode === 'questions') {
+                        io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
+                    } else {
+                        // If no questions, just resume the timer after a short delay
+                        setTimeout(() => resumeTimer(ROOM_ID), 500);
+                    }
                 }
             } else {
                 setTimeout(() => {
@@ -222,7 +246,6 @@ io.on('connection', socket => {
         if (!asker) return;
 
         if (questionsLeft(asker) <= 0) {
-            socket.emit('noQuestionsLeft');
             if (!room.gameOver) resumeTimer(ROOM_ID);
             return cb && cb({ ok: false, error: 'No questions left.' });
         }
