@@ -46,9 +46,7 @@ function createNewGameState() {
         currentPlayer: 0,
         timer: { remaining: 180, running: false, intervalId: null },
         log: [],
-        gameOver: false,
-        gameMode: 'questions', // Default mode
-        playerChoices: {} // To track who has chosen
+        gameOver: false
     };
 }
 
@@ -84,7 +82,7 @@ function checkGameOver(roomId) {
 
     if (!winner) {
         const totalMatches = (room.players[0]?.matches || 0) + (room.players[1]?.matches || 0);
-        if (totalMatches === 10 || room.timer.remaining <= 0) {
+        if (totalMatches === 10 || (room.timer.remaining <= 0 && room.players.length === 2) ) {
             const p1Matches = room.players[0]?.matches || 0;
             const p2Matches = room.players[1]?.matches || 0;
 
@@ -148,28 +146,13 @@ io.on('connection', socket => {
         room.players.push({ id: socket.id, name: playerName, matches: 0, asked: 0 });
     }
     
-    io.to(ROOM_ID).emit('gameModeUpdated', { mode: room.gameMode });
-    // DO NOT broadcast state here anymore. Wait for game to start.
+    // **TIMER FIX**: Start the timer as soon as two players have joined.
+    if (room.players.length === 2 && !room.timer.running && !room.gameOver) {
+        startTimer(ROOM_ID);
+    }
     
-    socket.on('setGameMode', ({ mode }) => {
-        const room = rooms[ROOM_ID];
-        if (!room) return;
-        
-        if (mode === 'no-questions') {
-            room.gameMode = 'no-questions';
-        }
-        room.playerChoices[socket.id] = true;
-
-        io.to(ROOM_ID).emit('gameModeUpdated', { mode: room.gameMode });
-
-        if (Object.keys(room.playerChoices).length >= room.players.length && room.players.length === 2) {
-             if (!room.timer.running && !room.gameOver) {
-                startTimer(ROOM_ID);
-                broadcastState(ROOM_ID); // <-- Broadcast state ONLY when game starts
-            }
-        }
-    });
-
+    broadcastState(ROOM_ID);
+    
     socket.on('rematch', (_, cb) => {
         const room = rooms[ROOM_ID];
         if (!room) return cb && cb({ ok: false, error: 'No game found.' });
@@ -180,13 +163,15 @@ io.on('connection', socket => {
         newGame.players = room.players.map((p, i) => ({ ...p, name: playerNames[i], matches: 0, asked: 0 }));
         rooms[ROOM_ID] = newGame;
         
+        startTimer(ROOM_ID); // Restart timer immediately on rematch
+        broadcastState(ROOM_ID);
         io.to(ROOM_ID).emit('gameReset');
         cb && cb({ ok: true });
     });
 
     socket.on('flip', ({ idx }, cb) => {
         const room = rooms[ROOM_ID];
-        if (!room || room.gameOver) return;
+        if (!room || room.gameOver || !room.timer.running) return; // Prevent flips before game starts
         
         const playerIndex = room.players.findIndex(p => p.id === socket.id);
         if (playerIndex === -1 || room.currentPlayer !== playerIndex) {
@@ -216,11 +201,7 @@ io.on('connection', socket => {
                 checkGameOver(ROOM_ID); 
                 
                 if (!room.gameOver) {
-                    if (room.gameMode === 'questions') {
-                        io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
-                    } else {
-                        setTimeout(() => resumeTimer(ROOM_ID), 500);
-                    }
+                    io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
                 }
             } else {
                 setTimeout(() => {
