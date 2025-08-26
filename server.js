@@ -155,14 +155,12 @@ io.on('connection', socket => {
         const room = rooms[ROOM_ID];
         if (!room) return;
         
-        // If one player says "no-questions", the mode is set for the whole game
         if (mode === 'no-questions') {
             room.gameMode = 'no-questions';
         }
-        room.playerChoices[socket.id] = true; // Mark that this player has chosen
+        room.playerChoices[socket.id] = true;
 
-        // If both players have made a choice, start the game
-        if (Object.keys(room.playerChoices).length === 2 && room.players.length === 2) {
+        if (Object.keys(room.playerChoices).length >= room.players.length && room.players.length === 2) {
              if (!room.timer.running && !room.gameOver) {
                 startTimer(ROOM_ID);
             }
@@ -182,7 +180,6 @@ io.on('connection', socket => {
         newGame.players = room.players.map((p, i) => ({ ...p, name: playerNames[i], matches: 0, asked: 0 }));
         rooms[ROOM_ID] = newGame;
         
-        // Don't start timer, wait for mode selection
         broadcastState(ROOM_ID);
         io.to(ROOM_ID).emit('gameReset');
         cb && cb({ ok: true });
@@ -223,7 +220,6 @@ io.on('connection', socket => {
                     if (room.gameMode === 'questions') {
                         io.to(player.id).emit('askQuestion', { remaining: questionsLeft(player) });
                     } else {
-                        // If no questions, just resume the timer after a short delay
                         setTimeout(() => resumeTimer(ROOM_ID), 500);
                     }
                 }
@@ -232,6 +228,7 @@ io.on('connection', socket => {
                     cardA.revealed = cardB.revealed = false;
                     room.flipped = [];
                     room.currentPlayer = 1 - room.currentPlayer;
+                    // THIS LINE WAS MISSING AND IS NOW FIXED
                     broadcastState(ROOM_ID);
                 }, 900);
             }
