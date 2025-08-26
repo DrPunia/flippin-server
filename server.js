@@ -149,8 +149,8 @@ io.on('connection', socket => {
     }
     
     io.to(ROOM_ID).emit('gameModeUpdated', { mode: room.gameMode });
-    broadcastState(ROOM_ID);
-
+    // DO NOT broadcast state here anymore. Wait for game to start.
+    
     socket.on('setGameMode', ({ mode }) => {
         const room = rooms[ROOM_ID];
         if (!room) return;
@@ -160,14 +160,14 @@ io.on('connection', socket => {
         }
         room.playerChoices[socket.id] = true;
 
+        io.to(ROOM_ID).emit('gameModeUpdated', { mode: room.gameMode });
+
         if (Object.keys(room.playerChoices).length >= room.players.length && room.players.length === 2) {
              if (!room.timer.running && !room.gameOver) {
                 startTimer(ROOM_ID);
+                broadcastState(ROOM_ID); // <-- Broadcast state ONLY when game starts
             }
         }
-        
-        io.to(ROOM_ID).emit('gameModeUpdated', { mode: room.gameMode });
-        broadcastState(ROOM_ID);
     });
 
     socket.on('rematch', (_, cb) => {
@@ -180,7 +180,6 @@ io.on('connection', socket => {
         newGame.players = room.players.map((p, i) => ({ ...p, name: playerNames[i], matches: 0, asked: 0 }));
         rooms[ROOM_ID] = newGame;
         
-        broadcastState(ROOM_ID);
         io.to(ROOM_ID).emit('gameReset');
         cb && cb({ ok: true });
     });
@@ -228,7 +227,6 @@ io.on('connection', socket => {
                     cardA.revealed = cardB.revealed = false;
                     room.flipped = [];
                     room.currentPlayer = 1 - room.currentPlayer;
-                    // THIS LINE WAS MISSING AND IS NOW FIXED
                     broadcastState(ROOM_ID);
                 }, 900);
             }
